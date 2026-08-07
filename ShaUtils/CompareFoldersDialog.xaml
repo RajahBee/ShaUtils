@@ -8,15 +8,19 @@
     <Grid Margin="15">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <!-- Header -->
+            <!-- 0: Header -->
             <RowDefinition Height="Auto"/>
-            <!-- Path A -->
+            <!-- 1: Path A -->
             <RowDefinition Height="Auto"/>
-            <!-- Path B -->
+            <!-- 2: Path B -->
+            <RowDefinition Height="Auto"/>
+            <!-- 3: Comparison Type Selection -->
+            <RowDefinition Height="Auto"/>
+            <!-- 4: SHA256 Options Panel -->
             <RowDefinition Height="*"/>
-            <!-- Comparison Type Selection -->
+            <!-- 5: Spacer -->
             <RowDefinition Height="Auto"/>
-            <!-- Buttons -->
+            <!-- 6: Buttons -->
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0" Text="Compare these two folders:" FontWeight="Bold" FontSize="14" Margin="0,0,0,10"/>
@@ -30,16 +34,25 @@
         <!-- Comparison Type Dropdown -->
         <StackPanel Grid.Row="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,5">
             <TextBlock Text="Comparison type:" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,10,0"/>
-            <ComboBox x:Name="ComparisonTypeComboBox" Width="300" VerticalAlignment="Center">
-                <ComboBoxItem IsSelected="True">File Names &amp; Count (Super Fast)</ComboBoxItem>
-                <ComboBoxItem>Names, Sizes, &amp; Dates (Very Fast)</ComboBoxItem>
-                <ComboBoxItem>CRC32 Checksums (Fast Content Check)</ComboBoxItem>
+            <ComboBox x:Name="ComparisonTypeComboBox" Width="300" VerticalAlignment="Center" SelectionChanged="ComparisonTypeComboBox_SelectionChanged">
+                <ComboBoxItem IsSelected="True">Names, Sizes, &amp; Dates (Very Fast)</ComboBoxItem>
+                <ComboBoxItem>CRC64 Checksums (Fast Content Check)</ComboBoxItem>
                 <ComboBoxItem>SHA256 Hashes (Thorough, Slower)</ComboBoxItem>
             </ComboBox>
         </StackPanel>
 
+        <!-- SHA256 Options Dropdown (Hidden by default, shown when SHA256 is selected) -->
+        <StackPanel x:Name="Sha256OptionsPanel" Grid.Row="4" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,5" Visibility="Collapsed">
+            <TextBlock Text="SHA256 action:" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,23,0"/>
+            <ComboBox x:Name="Sha256ActionComboBox" Width="300" VerticalAlignment="Center">
+                <ComboBoxItem IsSelected="True">Compare hashes only</ComboBoxItem>
+                <ComboBoxItem>Save visible .sha256 &amp; compare</ComboBoxItem>
+                <ComboBoxItem>Save hidden .sha256 &amp; compare</ComboBoxItem>
+            </ComboBox>
+        </StackPanel>
+
         <!-- OK and Cancel Buttons -->
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
             <Button x:Name="CompareButton" Content="Compare" Width="100" Padding="5" IsDefault="True" Click="CompareButton_Click" Margin="0,0,10,0"/>
             <Button x:Name="CancelButton" Content="Cancel" Width="100" Padding="5" IsCancel="True" Click="CancelButton_Click"/>
         </StackPanel>

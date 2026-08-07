@@ -4,15 +4,22 @@ namespace ShaUtils
 {
     public enum ComparisonType
     {
-        NamesAndCount = 0,
-        NamesSizesAndDates = 1,
-        Crc32 = 2,
-        Sha256 = 3
+        NamesSizesAndDates = 0,
+        Crc64 = 1,
+        Sha256 = 2
+    }
+
+    public enum Sha256Action
+    {
+        CompareOnly = 0,
+        CreateVisibleAndCompare = 1,
+        CreateHiddenAndCompare = 2
     }
 
     public partial class CompareFoldersDialog : Window
     {
-        public ComparisonType SelectedComparisonType { get; private set; } = ComparisonType.NamesAndCount;
+        public ComparisonType SelectedComparisonType { get; private set; } = ComparisonType.NamesSizesAndDates;
+        public Sha256Action SelectedSha256Action { get; private set; } = Sha256Action.CompareOnly;
 
         public CompareFoldersDialog(string folderAPath, string folderBPath)
         {
@@ -21,9 +28,25 @@ namespace ShaUtils
             FolderBPathTextBlock.Text = folderBPath;
         }
 
+        private void ComparisonTypeComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (Sha256OptionsPanel == null) return;
+
+            // Index 2 is SHA256 in the ComboBox items
+            if (ComparisonTypeComboBox.SelectedIndex == 2)
+            {
+                Sha256OptionsPanel.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                Sha256OptionsPanel.Visibility = Visibility.Collapsed;
+            }
+        }
+
         private void CompareButton_Click(object sender, RoutedEventArgs e)
         {
             SelectedComparisonType = (ComparisonType)ComparisonTypeComboBox.SelectedIndex;
+            SelectedSha256Action = (Sha256Action)Sha256ActionComboBox.SelectedIndex;
             DialogResult = true;
             Close();
         }

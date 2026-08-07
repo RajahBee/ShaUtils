@@ -1143,7 +1143,9 @@ namespace ShaUtils
             if (reviewDialog.ShowDialog() == true)
             {
                 var type = reviewDialog.SelectedComparisonType;
-                MessageBox.Show($"Ready to run comparison of type: {type} for:\n\n1: {firstFolder}\n2: {secondFolder}", "Compare Folders", MessageBoxButton.OK, MessageBoxImage.Information);
+                var action = reviewDialog.SelectedSha256Action;
+                string actionText = type == ComparisonType.Sha256 ? $"\nSHA256 Action: {action}" : "";
+                MessageBox.Show($"Ready to run comparison of type: {type}{actionText} for:\n\n1: {firstFolder}\n2: {secondFolder}", "Compare Folders", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             else
             {
