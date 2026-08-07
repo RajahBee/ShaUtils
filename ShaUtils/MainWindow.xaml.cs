@@ -121,7 +121,7 @@ namespace ShaUtils
         public bool IsDirectory { get; set; }
         public bool IsExplicitlySelected { get; set; }
         public bool ShouldBeExpanded { get; set; }
-        public List<FileSystemNodeData> ChildrenData { get; set; } = new List<FileSystemNodeData>();
+        public List<FileSystemNodeData> ChildrenData { get; set; } = [];
     }
 
     public class FileSystemItem : DependencyObject
@@ -137,12 +137,12 @@ namespace ShaUtils
         public bool IsExpanded { get { return (bool)GetValue(IsExpandedProperty); } set { SetValue(IsExpandedProperty, value); } }
         public static readonly DependencyProperty IsExpandedProperty = DependencyProperty.Register("IsExpanded", typeof(bool), typeof(FileSystemItem), new PropertyMetadata(false));
         public FileSystemItem? Parent { get; set; }
-        public FileSystemItem() { Children = new ObservableCollection<FileSystemItem>(); }
+        public FileSystemItem() { Children = []; }
 
         internal static bool _isUpdatingCheckState = false;
         private static void OnIsCheckedChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            if (!(d is FileSystemItem item)) return;
+            if (d is not FileSystemItem item) return;
             if (item.IsUpdatingParentCheckState) return;
             if (_isUpdatingCheckState) return;
 
@@ -211,11 +211,10 @@ namespace ShaUtils
         }
     }
 
-    public class Sha256Entry
+    public class Sha256Entry(string hash, string fileName)
     {
-        public string Hash { get; set; } = string.Empty;
-        public string FileName { get; set; } = string.Empty;
-        public Sha256Entry(string hash, string fileName) { Hash = hash; FileName = fileName; }
+        public string Hash { get; set; } = hash; public string FileName { get; set; } = fileName;
+
         public override string ToString() => $"{Hash} {FileName}";
     }
 
@@ -225,7 +224,7 @@ namespace ShaUtils
         public static bool IsProgrammaticallyUpdatingTree { get; set; } = false;
 
         private readonly IEnumerable<string> _initialPaths;
-        private HashSet<string> _explicitlySelectedPaths;
+        private readonly HashSet<string> _explicitlySelectedPaths;
         private bool _isInitialLoadComplete = false;
         public static bool AutoSelectDescendants { get; set; } = true;
 
@@ -233,7 +232,7 @@ namespace ShaUtils
         private CancellationTokenSource? _forceCancellationTokenSource;
         private enum CancellationState { NotCancelled, GracefulCancelRequested, ForcedCancelRequested }
         private CancellationState _cancellationState = CancellationState.NotCancelled;
-        private readonly ObservableCollection<WorkerSlot> _workerSlots = new ObservableCollection<WorkerSlot>();
+        private readonly ObservableCollection<WorkerSlot> _workerSlots = [];
         private int _totalFilesProcessed = 0;
         private static readonly long LargeFileThreshold = 20 * 1024 * 1024; // 20 MB
 
@@ -286,12 +285,12 @@ namespace ShaUtils
                 {
                     DriveSelectComboBox.SelectedItem = driveToSelect;
                 }
-                else if (drives.Any())
+                else if (drives.Count != 0)
                 {
                     DriveSelectComboBox.SelectedIndex = 0;
                 }
             }
-            else if (drives.Any())
+            else if (drives.Count != 0)
             {
                 DriveSelectComboBox.SelectedIndex = 0;
             }
@@ -489,7 +488,7 @@ namespace ShaUtils
             {
                 stopwatch.Start();
                 LogMessage("Collecting files for Create/Update operation...");
-                var rootItems = SelectedItemsTreeView.ItemsSource as ObservableCollection<FileSystemItem> ?? new ObservableCollection<FileSystemItem>();
+                var rootItems = SelectedItemsTreeView.ItemsSource as ObservableCollection<FileSystemItem> ?? [];
                 var checkedItemsList = new List<FileSystemItem>();
                 IsProgrammaticallyUpdatingTree = true;
                 try
@@ -507,7 +506,7 @@ namespace ShaUtils
                 var checkedFiles = checkedItemsList
                     .Where(item => !item.IsDirectory && !item.FullPath.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase))
                     .ToList();
-                if (!checkedFiles.Any())
+                if (checkedFiles.Count == 0)
                 {
                     LogMessage("No eligible files selected for Create/Update operation.");
                     return;
@@ -654,7 +653,7 @@ namespace ShaUtils
                     }
 
                     if (File.Exists(sha256FilePath)) { File.SetAttributes(sha256FilePath, File.GetAttributes(sha256FilePath) & ~FileAttributes.ReadOnly & ~FileAttributes.Hidden); }
-                    WriteSha256File(sha256FilePath, shaEntries.Values.ToList());
+                    WriteSha256File(sha256FilePath, [.. shaEntries.Values]);
                     if (makeHidden) { File.SetAttributes(sha256FilePath, File.GetAttributes(sha256FilePath) | FileAttributes.Hidden); }
                 }
                 catch (Exception ex)
@@ -718,7 +717,7 @@ namespace ShaUtils
             {
                 stopwatch.Start();
                 LogMessage("Collecting files for Verify operation...");
-                var rootItems = SelectedItemsTreeView.ItemsSource as ObservableCollection<FileSystemItem> ?? new ObservableCollection<FileSystemItem>();
+                var rootItems = SelectedItemsTreeView.ItemsSource as ObservableCollection<FileSystemItem> ?? [];
                 var checkedItemsList = new List<FileSystemItem>();
                 IsProgrammaticallyUpdatingTree = true;
                 try
@@ -743,7 +742,7 @@ namespace ShaUtils
                 var checkedFiles = checkedItemsList
                     .Where(item => !item.IsDirectory && !item.FullPath.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase))
                     .ToList();
-                if (!checkedFiles.Any())
+                if (checkedFiles.Count == 0)
                 {
                     LogMessage("No eligible files selected for Verify operation.");
                     return;
@@ -783,13 +782,14 @@ namespace ShaUtils
                             try
                             {
                                 string directoryOrRootPath = Path.GetDirectoryName(fileItem.FullPath) ?? Path.GetPathRoot(fileItem.FullPath)!;
-                                if (!shaFileCache.ContainsKey(directoryOrRootPath))
+                                if (!shaFileCache.TryGetValue(directoryOrRootPath, out Dictionary<string, Sha256Entry>? existingShaEntries))
                                 {
                                     string sha256FileName = Path.GetPathRoot(directoryOrRootPath) == directoryOrRootPath ? ".sha256" : Path.GetFileName(directoryOrRootPath) + ".sha256";
                                     string sha256FilePath = Path.Combine(directoryOrRootPath, sha256FileName);
-                                    shaFileCache[directoryOrRootPath] = ReadSha256File(sha256FilePath);
+                                    existingShaEntries = ReadSha256File(sha256FilePath);
+                                    shaFileCache[directoryOrRootPath] = existingShaEntries;
                                 }
-                                var existingShaEntries = shaFileCache[directoryOrRootPath];
+
                                 if (existingShaEntries.TryGetValue(fileItem.Name, out Sha256Entry? storedEntry))
                                 {
                                     if (File.Exists(fileItem.FullPath))
@@ -932,7 +932,7 @@ namespace ShaUtils
             {
                 stopwatch.Start();
                 LogMessage($"Collecting items for: {actionText}...");
-                var rootItems = SelectedItemsTreeView.ItemsSource as ObservableCollection<FileSystemItem> ?? new ObservableCollection<FileSystemItem>();
+                var rootItems = SelectedItemsTreeView.ItemsSource as ObservableCollection<FileSystemItem> ?? [];
                 var checkedItemsList = new List<FileSystemItem>();
                 await foreach (var item in GetCheckedItems(rootItems, token))
                 {
@@ -944,7 +944,7 @@ namespace ShaUtils
                     .Where(dir => !string.IsNullOrEmpty(dir))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
-                if (!directoriesToProcess.Any())
+                if (directoriesToProcess.Count == 0)
                 {
                     LogMessage("No eligible files or directories selected for this action.");
                     return;
@@ -1038,7 +1038,7 @@ namespace ShaUtils
             try
             {
                 LogMessage("Counting .sha256 entries for selected files...");
-                var rootItems = SelectedItemsTreeView.ItemsSource as ObservableCollection<FileSystemItem> ?? new ObservableCollection<FileSystemItem>();
+                var rootItems = SelectedItemsTreeView.ItemsSource as ObservableCollection<FileSystemItem> ?? [];
                 var checkedItemsList = new List<FileSystemItem>();
                 await foreach (var item in GetCheckedItems(rootItems, CancellationToken.None))
                 {
@@ -1048,7 +1048,7 @@ namespace ShaUtils
                 var checkedFiles = checkedItemsList
                     .Where(item => !item.IsDirectory && !item.FullPath.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase))
                     .ToList();
-                if (!checkedFiles.Any())
+                if (checkedFiles.Count == 0)
                 {
                     LogMessage("No eligible files selected to count.");
                     MessageBox.Show("No eligible files were selected.", "Count Entries", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -1066,14 +1066,15 @@ namespace ShaUtils
                         string directoryPath = Path.GetDirectoryName(fileItem.FullPath) ?? string.Empty;
                         if (string.IsNullOrEmpty(directoryPath)) continue;
 
-                        if (!shaFileCache.ContainsKey(directoryPath))
+                        if (!shaFileCache.TryGetValue(directoryPath, out Dictionary<string, Sha256Entry>? value))
                         {
                             string sha256FileName = Path.GetPathRoot(directoryPath) == directoryPath ? ".sha256" : Path.GetFileName(directoryPath) + ".sha256";
                             string sha256FilePath = Path.Combine(directoryPath, sha256FileName);
-                            shaFileCache[directoryPath] = ReadSha256File(sha256FilePath);
+                            value = ReadSha256File(sha256FilePath);
+                            shaFileCache[directoryPath] = value;
                         }
 
-                        if (shaFileCache[directoryPath].ContainsKey(fileItem.Name))
+                        if (value.ContainsKey(fileItem.Name))
                         {
                             filesWithEntry++;
                         }
@@ -1164,7 +1165,7 @@ namespace ShaUtils
 
             int bytesRead;
             stopwatch.Start();
-            while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, token)) > 0)
+            while ((bytesRead = await stream.ReadAsync(buffer, token)) > 0)
             {
                 sha256.TransformBlock(buffer, 0, bytesRead, null, 0);
                 totalBytesRead += bytesRead;
@@ -1197,7 +1198,7 @@ namespace ShaUtils
                 }
             }
             sha256.TransformFinalBlock(buffer, 0, 0);
-            return BitConverter.ToString(sha256.Hash!).Replace("-", "").ToLowerInvariant();
+            return Convert.ToHexStringLower(sha256.Hash!);
         }
 
         private void CancelOperationButton_Click(object sender, RoutedEventArgs e)
@@ -1221,7 +1222,7 @@ namespace ShaUtils
             }
         }
 
-        private string FormatTimeSpan(TimeSpan t)
+        private static string FormatTimeSpan(TimeSpan t)
         {
             string formattedTime;
             if (t.TotalDays >= 1)
@@ -1297,7 +1298,7 @@ namespace ShaUtils
 
             try
             {
-                string[] dirs = Array.Empty<string>();
+                string[] dirs = [];
                 try
                 {
                     dirs = await Task.Run(() => Directory.GetDirectories(fsi.FullPath), token);
@@ -1321,7 +1322,7 @@ namespace ShaUtils
                     fsi.Children.Add(subDirItem);
                 }
 
-                string[] files = Array.Empty<string>();
+                string[] files = [];
                 try
                 {
                     files = await Task.Run(() => Directory.GetFiles(fsi.FullPath), token);
@@ -1379,8 +1380,8 @@ namespace ShaUtils
                 bool skipLargeFiles = Application.Current.Dispatcher.Invoke(() => SkipLargeFilesCheckBox.IsChecked ?? false);
                 List<FileSystemNodeData> rawDataRoots = await Task.Run(() => BuildDriveData(drivePath, skipLargeFiles));
 
-                ObservableCollection<FileSystemItem> uiTreeRoots = new ObservableCollection<FileSystemItem>();
-                Dictionary<string, FileSystemItem> uiNodes = new Dictionary<string, FileSystemItem>(StringComparer.OrdinalIgnoreCase);
+                ObservableCollection<FileSystemItem> uiTreeRoots = [];
+                Dictionary<string, FileSystemItem> uiNodes = new(StringComparer.OrdinalIgnoreCase);
                 foreach (var dataNode in rawDataRoots)
                 {
                     CreateUITreeNode(dataNode, null, uiTreeRoots, uiNodes);
@@ -1414,13 +1415,13 @@ namespace ShaUtils
             }
         }
 
-        private FileSystemItem CreateUITreeNode(FileSystemNodeData dataNode, FileSystemItem? parentItem, ObservableCollection<FileSystemItem> collectionToAddInto, Dictionary<string, FileSystemItem> uiNodes)
+        private static FileSystemItem CreateUITreeNode(FileSystemNodeData dataNode, FileSystemItem? parentItem, ObservableCollection<FileSystemItem> collectionToAddInto, Dictionary<string, FileSystemItem> uiNodes)
         {
             if (uiNodes.TryGetValue(dataNode.FullPath, out var existingUiItem))
             {
                 return existingUiItem;
             }
-            FileSystemItem uiItem = new FileSystemItem
+            FileSystemItem uiItem = new()
             {
                 Name = dataNode.Name,
                 FullPath = dataNode.FullPath,
@@ -1431,7 +1432,7 @@ namespace ShaUtils
             uiNodes[dataNode.FullPath] = uiItem;
             if (dataNode.IsDirectory)
             {
-                if (dataNode.ChildrenData.Any())
+                if (dataNode.ChildrenData.Count != 0)
                 {
                     foreach (var childData in dataNode.ChildrenData)
                     {
@@ -1439,7 +1440,7 @@ namespace ShaUtils
                     }
                     uiItem.HasDummyChild = false;
                 }
-                else if (!dataNode.ChildrenData.Any() && !dataNode.ShouldBeExpanded)
+                else if (dataNode.ChildrenData.Count == 0 && !dataNode.ShouldBeExpanded)
                 {
                     uiItem.Children.Add(new FileSystemItem());
                     uiItem.HasDummyChild = true;
@@ -1560,7 +1561,7 @@ namespace ShaUtils
         }
 
 
-        private void UpdateChildrenAndParentCheckStates(FileSystemItem item)
+        private static void UpdateChildrenAndParentCheckStates(FileSystemItem item)
         {
             if (item.IsDirectory && item.Children.Any() && !item.HasDummyChild)
             {
@@ -1577,7 +1578,7 @@ namespace ShaUtils
 
         private void CopyAllToClipboard_Click(object sender, RoutedEventArgs e)
         {
-            StringBuilder logContent = new StringBuilder();
+            StringBuilder logContent = new();
             foreach (var item in StatusLogListBox.Items)
             {
                 logContent.AppendLine(GetLogItemText(item));
@@ -1600,7 +1601,7 @@ namespace ShaUtils
                 LogMessage("No status log rows selected to copy.");
                 return;
             }
-            StringBuilder logContent = new StringBuilder();
+            StringBuilder logContent = new();
             foreach (var item in StatusLogListBox.SelectedItems)
             {
                 logContent.AppendLine(GetLogItemText(item));
@@ -1625,7 +1626,7 @@ namespace ShaUtils
             });
         }
 
-        private string GetLogItemText(object? item)
+        private static string GetLogItemText(object? item)
         {
             if (item is ListBoxItem lbi)
             {
@@ -1658,8 +1659,8 @@ namespace ShaUtils
                     int firstSpaceIndex = trimmedLine.IndexOf(' ');
                     if (firstSpaceIndex > 0 && trimmedLine.Length > firstSpaceIndex + 1)
                     {
-                        string hash = trimmedLine.Substring(0, firstSpaceIndex).Trim();
-                        string fileName = trimmedLine.Substring(firstSpaceIndex + 1).Trim();
+                        string hash = trimmedLine[..firstSpaceIndex].Trim();
+                        string fileName = trimmedLine[(firstSpaceIndex + 1)..].Trim();
                         if (!string.IsNullOrEmpty(hash) && !string.IsNullOrEmpty(fileName))
                         {
                             entries[fileName] = new Sha256Entry(hash, fileName);
@@ -1679,7 +1680,7 @@ namespace ShaUtils
             try
             {
                 var sortedEntries = entries.OrderBy(e => e.FileName, StringComparer.OrdinalIgnoreCase).ToList();
-                StringBuilder sb = new StringBuilder();
+                StringBuilder sb = new();
                 foreach (var entry in sortedEntries)
                 {
                     sb.AppendLine(entry.ToString());
