@@ -25,7 +25,9 @@
         "publish",
         "${workspaceFolder}/ShaUtils/ShaUtils.csproj",
         "-c",
-        "Release"
+        "Release",
+        "-o",
+        "C:/Users/roger/source/repos/ShaUtils published executable/"
       ],
       "problemMatcher": "$msCompile"
     },
