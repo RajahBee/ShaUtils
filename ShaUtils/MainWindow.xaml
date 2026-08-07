@@ -1,4 +1,4 @@
-﻿<Window x:Class="ShaUtils.MainWindow"
+<Window x:Class="ShaUtils.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -13,19 +13,27 @@
             <RowDefinition Height="Auto"/>
             <!-- 0: Header -->
             <RowDefinition Height="Auto"/>
-            <!-- 1: Buttons and Options -->
+            <!-- 1: Folder Comparison Button Row -->
             <RowDefinition Height="Auto"/>
-            <!-- 2: Drive Select & Status Log -->
+            <!-- 2: Buttons and Options -->
+            <RowDefinition Height="Auto"/>
+            <!-- 3: Drive Select & Status Log -->
             <RowDefinition Height="*"/>
-            <!-- 3: TreeView / Progress View -->
+            <!-- 4: TreeView / Progress View -->
         </Grid.RowDefinitions>
 
         <!-- Row 0: Header -->
         <TextBlock Grid.Row="0" Text="ShaUtils: .sha256 files made simple."
                    HorizontalAlignment="Center" FontSize="24" Margin="10"/>
 
-        <!-- Row 1: Buttons and Options -->
-        <Grid Grid.Row="1" Margin="0,10">
+        <!-- Row 1: Folder Comparison Button Row -->
+        <Button x:Name="CompareFoldersButton" Grid.Row="1" 
+                Content="Select, calculate, and compare the hashes for two folders and their files" 
+                Padding="10" Margin="5,5,5,10"
+                Click="CompareFoldersButton_Click"/>
+
+        <!-- Row 2: Buttons and Options -->
+        <Grid Grid.Row="2" Margin="0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="*"/>
@@ -57,17 +65,17 @@
                     <Button x:Name="CancelOperationButton" Grid.Column="1" Content="Cancel Operation" Padding="10" Margin="5,0,0,0" IsEnabled="False" Click="CancelOperationButton_Click"/>
                 </Grid>
                 <CheckBox x:Name="AutoSelectDescendantsCheckBox" Content="Automatically select/deselect descendants"
-                          IsChecked="True" Margin="0,10,0,0"/>
+                           IsChecked="True" Margin="0,10,0,0"/>
                 <CheckBox x:Name="SkipLargeFilesCheckBox" Content="Skip Virtualization &amp; Backup Files (.vhd, .tibx, etc.)"
-                          IsChecked="False" Margin="0,10,0,0"/>
+                           IsChecked="False" Margin="0,10,0,0"/>
                 <!-- NEW: Count Entries Button -->
                 <Button x:Name="CountEntriesButton" Content="Count files with/without .sha256 file entries" 
                         Padding="5" Margin="0,10,0,0" Click="CountEntriesButton_Click"/>
             </StackPanel>
         </Grid>
 
-        <!-- Row 2: Drive Select & Status Log -->
-        <Grid Grid.Row="2" Margin="0,5">
+        <!-- Row 3: Drive Select & Status Log -->
+        <Grid Grid.Row="3" Margin="0,5">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="1*"/>
                 <ColumnDefinition Width="7*"/>
@@ -96,8 +104,8 @@
             </GroupBox>
         </Grid>
 
-        <!-- Row 3: TreeView of Selected Items / Progress View -->
-        <GroupBox Grid.Row="3" Header="Selected Items" Margin="0,5">
+        <!-- Row 4: TreeView of Selected Items / Progress View -->
+        <GroupBox Grid.Row="4" Header="Selected Items" Margin="0,5">
             <Grid>
                 <TreeView x:Name="SelectedItemsTreeView" Visibility="Visible">
                     <TreeView.ItemContainerStyle>

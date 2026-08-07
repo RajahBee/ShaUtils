@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -1097,6 +1097,56 @@ namespace ShaUtils
             {
                 this.IsEnabled = true;
                 Mouse.OverrideCursor = null;
+            }
+        }
+
+        private void CompareFoldersButton_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog1 = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "Choose the first directory that you wish to compare against or click cancel to cancel the entire compare operation"
+            };
+
+            if (dialog1.ShowDialog() != true)
+            {
+                LogMessage("Folder comparison cancelled. First directory selection was cancelled.");
+                return;
+            }
+
+            string firstFolder = dialog1.FolderName;
+
+            var dialog2 = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "Choose the directory to compare to the previously chosen directory or click cancel to cancel the entire compare operation"
+            };
+
+            if (dialog2.ShowDialog() != true)
+            {
+                LogMessage("Folder comparison cancelled. Second directory selection was cancelled.");
+                return;
+            }
+
+            string secondFolder = dialog2.FolderName;
+
+            if (string.Equals(firstFolder, secondFolder, StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("Please choose two different folders to compare.", "Invalid Comparison", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var reviewDialog = new CompareFoldersDialog(firstFolder, secondFolder)
+            {
+                Owner = this
+            };
+
+            if (reviewDialog.ShowDialog() == true)
+            {
+                var type = reviewDialog.SelectedComparisonType;
+                MessageBox.Show($"Ready to run comparison of type: {type} for:\n\n1: {firstFolder}\n2: {secondFolder}", "Compare Folders", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                LogMessage("Folder comparison cancelled from review dialog.");
             }
         }
 
