@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug ShaUtils (WPF)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/ShaUtils/bin/Debug/net10.0-windows/win-x64/ShaUtils.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}/ShaUtils",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    }
+  ]
+}

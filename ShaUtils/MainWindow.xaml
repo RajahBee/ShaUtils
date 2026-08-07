@@ -1,0 +1,163 @@
+﻿<Window x:Class="ShaUtils.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:ShaUtils"
+        mc:Ignorable="d"
+        Title="ShaUtils" Height="700" Width="900" MinHeight="450" MinWidth="600"
+        WindowStartupLocation="CenterScreen"
+        Loaded="Window_Loaded">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <!-- 0: Header -->
+            <RowDefinition Height="Auto"/>
+            <!-- 1: Buttons and Options -->
+            <RowDefinition Height="Auto"/>
+            <!-- 2: Drive Select & Status Log -->
+            <RowDefinition Height="*"/>
+            <!-- 3: TreeView / Progress View -->
+        </Grid.RowDefinitions>
+
+        <!-- Row 0: Header -->
+        <TextBlock Grid.Row="0" Text="ShaUtils: .sha256 files made simple."
+                   HorizontalAlignment="Center" FontSize="24" Margin="10"/>
+
+        <!-- Row 1: Buttons and Options -->
+        <Grid Grid.Row="1" Margin="0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Left Column: Create/Update and Actions -->
+            <StackPanel Grid.Column="0" Margin="5">
+                <Button x:Name="CreateButton" Content="Create/Update .SHA256 files for selected items" Padding="10" Click="CreateButton_Click"/>
+                <ComboBox x:Name="NewFileActionComboBox" Margin="0,10,0,0">
+                    <ComboBoxItem IsSelected="True">Make new/updated .SHA256 files HIDDEN</ComboBoxItem>
+                    <ComboBoxItem>Make new/updated .SHA256 files VISIBLE</ComboBoxItem>
+                </ComboBox>
+                <ComboBox x:Name="ExistingShaFileActionsComboBox" Margin="0,10,0,0" SelectionChanged="ExistingShaFileActionsComboBox_SelectionChanged">
+                    <ComboBoxItem>Existing .SHA256 files (in selection area) actions:</ComboBoxItem>
+                    <ComboBoxItem>Make existing .SHA256 files HIDDEN</ComboBoxItem>
+                    <ComboBoxItem>Make existing .SHA256 files VISIBLE</ComboBoxItem>
+                    <ComboBoxItem>DELETE all existing .SHA256 files</ComboBoxItem>
+                </ComboBox>
+            </StackPanel>
+
+            <!-- Right Column: Verify and Options -->
+            <StackPanel Grid.Column="1" Margin="5">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="VerifyButton" Grid.Column="0" Content="Verify selected items against existing .SHA256 files" Padding="10" Click="VerifyButton_Click"/>
+                    <Button x:Name="CancelOperationButton" Grid.Column="1" Content="Cancel Operation" Padding="10" Margin="5,0,0,0" IsEnabled="False" Click="CancelOperationButton_Click"/>
+                </Grid>
+                <CheckBox x:Name="AutoSelectDescendantsCheckBox" Content="Automatically select/deselect descendants"
+                          IsChecked="True" Margin="0,10,0,0"/>
+                <CheckBox x:Name="SkipLargeFilesCheckBox" Content="Skip Virtualization &amp; Backup Files (.vhd, .tibx, etc.)"
+                          IsChecked="False" Margin="0,10,0,0"/>
+                <!-- NEW: Count Entries Button -->
+                <Button x:Name="CountEntriesButton" Content="Count files with/without .sha256 file entries" 
+                        Padding="5" Margin="0,10,0,0" Click="CountEntriesButton_Click"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- Row 2: Drive Select & Status Log -->
+        <Grid Grid.Row="2" Margin="0,5">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1*"/>
+                <ColumnDefinition Width="7*"/>
+            </Grid.ColumnDefinitions>
+
+            <GroupBox Grid.Column="0" Header="Select Drive" Margin="0,0,5,0">
+                <StackPanel>
+                    <ComboBox x:Name="DriveSelectComboBox" VerticalAlignment="Top" Margin="5"/>
+
+                    <TextBlock Text="Threads" Margin="5,10,5,0" FontWeight="SemiBold"/>
+                    <ComboBox x:Name="ThreadCountComboBox" VerticalAlignment="Top" Margin="5,3,5,5"/>
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Grid.Column="1" Header="Status Log" Margin="5,0,0,0">
+                <ListBox x:Name="StatusLogListBox" SelectionMode="Extended" Height="100"
+                         ToolTip="Right-click in this area for log options.">
+                    <ListBox.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Copy All to Clipboard" Click="CopyAllToClipboard_Click"/>
+                            <MenuItem Header="Copy Selected Row(s) to Clipboard" Click="CopySelectedRowsToClipboard_Click"/>
+                            <MenuItem Header="Clear Status Log" Click="ClearStatusLog_Click"/>
+                        </ContextMenu>
+                    </ListBox.ContextMenu>
+                </ListBox>
+            </GroupBox>
+        </Grid>
+
+        <!-- Row 3: TreeView of Selected Items / Progress View -->
+        <GroupBox Grid.Row="3" Header="Selected Items" Margin="0,5">
+            <Grid>
+                <TreeView x:Name="SelectedItemsTreeView" Visibility="Visible">
+                    <TreeView.ItemContainerStyle>
+                        <Style TargetType="{x:Type TreeViewItem}">
+                            <EventSetter Event="TreeViewItem.Expanded" Handler="TreeViewItem_Expanded"/>
+                            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                        </Style>
+                    </TreeView.ItemContainerStyle>
+                    <TreeView.ItemTemplate>
+                        <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                            <StackPanel Orientation="Horizontal">
+                                <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </HierarchicalDataTemplate>
+                    </TreeView.ItemTemplate>
+                </TreeView>
+
+                <Grid x:Name="ProgressViewGrid" Visibility="Collapsed" Margin="5">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <ProgressBar x:Name="OverallProgressBar" Grid.Row="0" Minimum="0" Maximum="100" Height="25" Margin="0,0,0,5"/>
+                    <TextBlock x:Name="OverallProgressText" Grid.Row="0" Text="0/0" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold"/>
+
+                    <TextBlock Grid.Row="1" Text="Currently Processing:" Margin="0,10,0,5" FontWeight="SemiBold"/>
+
+                    <ListBox x:Name="ActiveTasksItemsControl" Grid.Row="2" BorderThickness="1" BorderBrush="LightGray"
+                             HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type local:WorkerSlot}">
+                                <Grid Margin="2" MinHeight="24">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="150"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- Column 0: Progress Bar and File Info -->
+                                    <Grid Grid.Column="0">
+                                        <ProgressBar Value="{Binding ProgressPercentage}" 
+                                                     Visibility="{Binding ProgressBarVisibility}"
+                                                     Minimum="0" Maximum="100"/>
+                                        <StackPanel Orientation="Horizontal" Margin="5,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding FileSize}" FontWeight="Bold" Margin="0,0,10,0"/>
+                                            <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <!-- Column 1: Status (Speed and ETA) -->
+                                    <TextBlock Grid.Column="1" Text="{Binding StatusText}" Margin="10,0,0,0" 
+                                               FontStyle="Italic" Foreground="Gray" VerticalAlignment="Center"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Grid>
+        </GroupBox>
+    </Grid>
+</Window>
