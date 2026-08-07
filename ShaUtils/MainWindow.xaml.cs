@@ -251,7 +251,7 @@ namespace ShaUtils
         {
             ".tibx", ".mrimg", ".vhd", ".vhdx", ".vmdk", ".vdi"
         };
-        public MainWindow() : this(new List<string>()) { }
+        public MainWindow() : this([]) { }
 
         public MainWindow(IEnumerable<string> selectedPaths)
         {
@@ -1151,7 +1151,7 @@ namespace ShaUtils
             }
         }
 
-        private async Task<string> CalculateSha256(string filePath, CancellationToken token, IProgress<ProgressReport> progress)
+        private static async Task<string> CalculateSha256(string filePath, CancellationToken token, IProgress<ProgressReport> progress)
         {
             const int bufferSize = 1024 * 64; // 64KB buffer
             var buffer = new byte[bufferSize];
