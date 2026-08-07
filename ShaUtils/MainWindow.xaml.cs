@@ -417,6 +417,8 @@ namespace ShaUtils
                 ProgressViewGrid.Visibility = Visibility.Visible;
                 CreateButton.IsEnabled = false;
                 VerifyButton.IsEnabled = false;
+                CompareFoldersButton.IsEnabled = false;
+                CountEntriesButton.IsEnabled = false;
                 NewFileActionComboBox.IsEnabled = false;
                 ExistingShaFileActionsComboBox.IsEnabled = false;
                 CancelOperationButton.IsEnabled = true;
@@ -428,6 +430,8 @@ namespace ShaUtils
                 SelectedItemsTreeView.Visibility = Visibility.Visible;
                 CreateButton.IsEnabled = true;
                 VerifyButton.IsEnabled = true;
+                CompareFoldersButton.IsEnabled = true;
+                CountEntriesButton.IsEnabled = true;
                 NewFileActionComboBox.IsEnabled = true;
                 ExistingShaFileActionsComboBox.IsEnabled = true;
                 CancelOperationButton.IsEnabled = false;
@@ -1101,7 +1105,7 @@ namespace ShaUtils
             }
         }
 
-        private void CompareFoldersButton_Click(object sender, RoutedEventArgs e)
+        private async void CompareFoldersButton_Click(object sender, RoutedEventArgs e)
         {
             var dialog1 = new Microsoft.Win32.OpenFolderDialog
             {
@@ -1144,8 +1148,175 @@ namespace ShaUtils
             {
                 var type = reviewDialog.SelectedComparisonType;
                 var action = reviewDialog.SelectedSha256Action;
-                string actionText = type == ComparisonType.Sha256 ? $"\nSHA256 Action: {action}" : "";
-                MessageBox.Show($"Ready to run comparison of type: {type}{actionText} for:\n\n1: {firstFolder}\n2: {secondFolder}", "Compare Folders", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                if (type != ComparisonType.NamesSizesAndDates)
+                {
+                    MessageBox.Show("This comparison type is not yet implemented.", "Compare Folders", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                _cancellationState = CancellationState.NotCancelled;
+                _cancellationTokenSource = new CancellationTokenSource();
+                _forceCancellationTokenSource = new CancellationTokenSource();
+                var gracefulToken = _cancellationTokenSource.Token;
+                var forceToken = _forceCancellationTokenSource.Token;
+                var stopwatch = new Stopwatch();
+
+                SetUiForOperationState(true, 0);
+
+                IProgress<ProgressReport> progress = new Progress<ProgressReport>(report =>
+                {
+                    switch (report.Type)
+                    {
+                        case ProgressReport.ReportType.OverallFileCompleted:
+                            OverallProgressBar.Value = report.OverallProgress;
+                            OverallProgressText.Text = $"{report.OverallProgress}/{OverallProgressBar.Maximum}";
+                            break;
+                        case ProgressReport.ReportType.StatusMessage:
+                            LogMessage(report.Message);
+                            break;
+                    }
+                });
+
+                try
+                {
+                    stopwatch.Start();
+                    LogMessage("Starting folder comparison...");
+                    LogMessage($"Folder 1: {firstFolder}");
+                    LogMessage($"Folder 2: {secondFolder}");
+                    LogMessage($"Comparison Type: Names, Sizes & Dates");
+
+                    bool skipLargeFiles = false;
+                    Application.Current.Dispatcher.Invoke(() => skipLargeFiles = SkipLargeFilesCheckBox.IsChecked ?? false);
+
+                    await Task.Run(async () =>
+                    {
+                        // 1. Scan Folder A
+                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Scanning '{firstFolder}'..." });
+                        var filesA = await ScanFolderAsync(firstFolder, skipLargeFiles, gracefulToken);
+                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Found {filesA.Count} files in '{firstFolder}'." });
+
+                        // 2. Scan Folder B
+                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Scanning '{secondFolder}'..." });
+                        var filesB = await ScanFolderAsync(secondFolder, skipLargeFiles, gracefulToken);
+                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Found {filesB.Count} files in '{secondFolder}'." });
+
+                        // 3. Setup progress bar maximum
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            OverallProgressBar.Maximum = filesA.Count + filesB.Count;
+                            OverallProgressText.Text = $"0/{OverallProgressBar.Maximum}";
+                        });
+
+                        int processedCount = 0;
+                        int matches = 0;
+                        var mismatches = new List<string>();
+                        var onlyInA = new List<string>();
+                        var onlyInB = new List<string>();
+
+                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Comparing file names, sizes, and modification dates..." });
+
+                        // Phase 1: Compare A to B
+                        foreach (var kvp in filesA)
+                        {
+                            gracefulToken.ThrowIfCancellationRequested();
+                            string relativePath = kvp.Key;
+                            var metaA = kvp.Value;
+
+                            if (filesB.TryGetValue(relativePath, out var metaB))
+                            {
+                                bool sizeMatch = metaA.Size == metaB.Size;
+                                bool dateMatch = Math.Abs((metaA.LastWriteTimeUtc - metaB.LastWriteTimeUtc).TotalSeconds) <= 2;
+
+                                if (sizeMatch && dateMatch)
+                                {
+                                    matches++;
+                                }
+                                else
+                                {
+                                    var reasons = new List<string>();
+                                    if (!sizeMatch) reasons.Add($"size differs ({FormatFileSize(metaA.Size)} vs {FormatFileSize(metaB.Size)})");
+                                    if (!dateMatch) reasons.Add($"date differs ({metaA.LastWriteTimeUtc.ToLocalTime()} vs {metaB.LastWriteTimeUtc.ToLocalTime()})");
+                                    mismatches.Add($"{relativePath} ({string.Join(", ", reasons)})");
+                                }
+                            }
+                            else
+                            {
+                                onlyInA.Add(relativePath);
+                            }
+
+                            processedCount++;
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.OverallFileCompleted, OverallProgress = processedCount });
+                        }
+
+                        // Phase 2: Check for files in B only
+                        foreach (var kvp in filesB)
+                        {
+                            gracefulToken.ThrowIfCancellationRequested();
+                            string relativePath = kvp.Key;
+
+                            if (!filesA.ContainsKey(relativePath))
+                            {
+                                onlyInB.Add(relativePath);
+                            }
+
+                            processedCount++;
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.OverallFileCompleted, OverallProgress = processedCount });
+                        }
+
+                        // Logging results
+                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Folder comparison complete." });
+                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Matches: {matches}" });
+                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Mismatches (Size/Date): {mismatches.Count}" });
+                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder A: {onlyInA.Count}" });
+                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder B: {onlyInB.Count}" });
+
+                        // Report detailed errors (up to 5 samples each)
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            ReportErrors("Mismatched (Size/Date)", mismatches);
+                            ReportErrors("Only in Folder A", onlyInA);
+                            ReportErrors("Only in Folder B", onlyInB);
+                        });
+
+                        // Show MessageBox summary on UI thread
+                        string summaryMessage = $"Comparison complete for folders:\n" +
+                                               $"1: {firstFolder}\n" +
+                                               $"2: {secondFolder}\n\n" +
+                                               $"Matches: {matches}\n" +
+                                               $"Mismatches (Size/Date): {mismatches.Count}\n" +
+                                               $"Only in Folder A: {onlyInA.Count}\n" +
+                                               $"Only in Folder B: {onlyInB.Count}";
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            MessageBox.Show(this, summaryMessage, "Comparison Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                        });
+                    }, gracefulToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    if (_cancellationState == CancellationState.ForcedCancelRequested)
+                    {
+                        LogMessage("Folder comparison aborted by the user.");
+                    }
+                    else
+                    {
+                        LogMessage("Folder comparison cancelled by the user.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Error during folder comparison: {ex.Message}");
+                }
+                finally
+                {
+                    stopwatch.Stop();
+                    LogMessage($"Total elapsed time: {stopwatch.Elapsed:g}");
+                    SetUiForOperationState(false);
+                    _cancellationState = CancellationState.NotCancelled;
+                    _cancellationTokenSource?.Dispose();
+                    _forceCancellationTokenSource?.Dispose();
+                }
             }
             else
             {
@@ -1697,6 +1868,87 @@ namespace ShaUtils
             {
                 LogMessage($"Error writing .sha256 file '{sha256FilePath}': {ex.Message}");
             }
+        }
+
+        private class FileComparisonMetadata
+        {
+            public string RelativePath { get; set; } = string.Empty;
+            public string FullPath { get; set; } = string.Empty;
+            public long Size { get; set; }
+            public DateTime LastWriteTimeUtc { get; set; }
+        }
+
+        private async Task<Dictionary<string, FileComparisonMetadata>> ScanFolderAsync(string folderPath, bool skipLargeFiles, CancellationToken token)
+        {
+            var metadataMap = new Dictionary<string, FileComparisonMetadata>(StringComparer.OrdinalIgnoreCase);
+            var dirsToProcess = new Stack<string>();
+            dirsToProcess.Push(folderPath);
+
+            while (dirsToProcess.Count > 0)
+            {
+                token.ThrowIfCancellationRequested();
+                string currentDir = dirsToProcess.Pop();
+
+                // 1. Process files in currentDir
+                try
+                {
+                    var files = Directory.GetFiles(currentDir);
+                    foreach (var file in files)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        string fileName = Path.GetFileName(file);
+
+                        // Exclude system files/names
+                        if (ExcludedFileNames.Contains(fileName)) continue;
+                        if (skipLargeFiles && LargeFileExtensions.Contains(Path.GetExtension(fileName))) continue;
+
+                        var fileInfo = new FileInfo(file);
+                        string relativePath = Path.GetRelativePath(folderPath, file);
+
+                        metadataMap[relativePath] = new FileComparisonMetadata
+                        {
+                            RelativePath = relativePath,
+                            FullPath = file,
+                            Size = fileInfo.Length,
+                            LastWriteTimeUtc = fileInfo.LastWriteTimeUtc
+                        };
+                    }
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    LogMessage($"Access denied to files in directory: {currentDir}");
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Error scanning files in '{currentDir}': {ex.Message}");
+                }
+
+                // 2. Process subdirectories in currentDir
+                try
+                {
+                    var subDirs = Directory.GetDirectories(currentDir);
+                    foreach (var subDir in subDirs)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        string dirName = Path.GetFileName(subDir);
+                        if (ExcludedFolderNames.Contains(dirName)) continue;
+                        dirsToProcess.Push(subDir);
+                    }
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    LogMessage($"Access denied to directories in: {currentDir}");
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Error listing subdirectories in '{currentDir}': {ex.Message}");
+                }
+
+                // Yield to keep UI responsive
+                await Task.Yield();
+            }
+
+            return metadataMap;
         }
     }
 }
