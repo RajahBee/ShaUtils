@@ -1154,7 +1154,7 @@ namespace ShaUtils
                 var type = reviewDialog.SelectedComparisonType;
                 var action = reviewDialog.SelectedSha256Action;
 
-                if (type != ComparisonType.NamesSizesAndDates && type != ComparisonType.Crc64)
+                if (type != ComparisonType.NamesSizesAndDates && type != ComparisonType.Crc64 && type != ComparisonType.Sha256)
                 {
                     MessageBox.Show("This comparison type is not yet implemented.", "Compare Folders", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
@@ -1167,7 +1167,7 @@ namespace ShaUtils
                 var forceToken = _forceCancellationTokenSource.Token;
                 var stopwatch = new Stopwatch();
 
-                int workerThreads = type == ComparisonType.Crc64 ? GetSelectedThreadCountClamped() : 0;
+                int workerThreads = (type == ComparisonType.Crc64 || type == ComparisonType.Sha256) ? GetSelectedThreadCountClamped() : 0;
                 SetUiForOperationState(true, workerThreads);
 
                 IProgress<ProgressReport> progress = new Progress<ProgressReport>(report =>
@@ -1532,6 +1532,231 @@ namespace ShaUtils
                             Application.Current.Dispatcher.Invoke(() =>
                             {
                                 MessageBox.Show(this, summaryMessage, "CRC64 Comparison Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                            });
+                        }
+                        else if (type == ComparisonType.Sha256)
+                        {
+                            var mismatchesSha = new ConcurrentBag<string>();
+                            var filesToHash = new List<FileComparisonMetadata>();
+
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Matching files and running size pre-checks..." });
+
+                            // Phase 1: Match A to B and determine what needs hashing
+                            foreach (var kvp in filesA)
+                            {
+                                gracefulToken.ThrowIfCancellationRequested();
+                                string relativePath = kvp.Key;
+                                var metaA = kvp.Value;
+
+                                if (filesB.TryGetValue(relativePath, out var metaB))
+                                {
+                                    if (metaA.Size == metaB.Size)
+                                    {
+                                        filesToHash.Add(metaA);
+                                        filesToHash.Add(metaB);
+                                    }
+                                    else
+                                    {
+                                        mismatchesSha.Add($"{relativePath} (size differs: {FormatFileSize(metaA.Size)} vs {FormatFileSize(metaB.Size)})");
+                                        if (action != Sha256Action.CompareOnly)
+                                        {
+                                            filesToHash.Add(metaA);
+                                            filesToHash.Add(metaB);
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    onlyInA.Add(relativePath);
+                                    if (action != Sha256Action.CompareOnly)
+                                    {
+                                        filesToHash.Add(metaA);
+                                    }
+                                }
+                            }
+
+                            // Phase 2: Check for files in B only
+                            foreach (var kvp in filesB)
+                            {
+                                gracefulToken.ThrowIfCancellationRequested();
+                                string relativePath = kvp.Key;
+                                var metaB = kvp.Value;
+
+                                if (!filesA.ContainsKey(relativePath))
+                                {
+                                    onlyInB.Add(relativePath);
+                                    if (action != Sha256Action.CompareOnly)
+                                    {
+                                        filesToHash.Add(metaB);
+                                    }
+                                }
+                            }
+
+                            var uniqueFilesToHash = filesToHash.Distinct().ToList();
+
+                            if (uniqueFilesToHash.Count > 0)
+                            {
+                                progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Calculating SHA256 hashes for {uniqueFilesToHash.Count} files using {workerThreads} worker threads..." });
+
+                                Application.Current.Dispatcher.Invoke(() =>
+                                {
+                                    OverallProgressBar.Maximum = uniqueFilesToHash.Count;
+                                    OverallProgressText.Text = $"0/{OverallProgressBar.Maximum}";
+                                });
+
+                                int processedCount = 0;
+                                var fileQueue = new ConcurrentQueue<FileComparisonMetadata>(uniqueFilesToHash);
+                                var consumerTasks = new List<Task>();
+
+                                for (int i = 0; i < workerThreads; i++)
+                                {
+                                    int slotIndex = i;
+                                    consumerTasks.Add(Task.Run(async () =>
+                                    {
+                                        while (fileQueue.TryDequeue(out var meta))
+                                        {
+                                            gracefulToken.ThrowIfCancellationRequested();
+
+                                            progress.Report(new ProgressReport
+                                            {
+                                                Type = ProgressReport.ReportType.SlotUpdate,
+                                                UpdateType = ProgressReport.SlotUpdateType.Started,
+                                                SlotIndex = slotIndex,
+                                                FileName = meta.RelativePath,
+                                                FileSize = FormatFileSize(meta.Size),
+                                                FullFileSize = meta.Size
+                                            });
+
+                                            try
+                                            {
+                                                string hash = await CalculateSha256(meta.FullPath, forceToken, new Progress<ProgressReport>(p =>
+                                                {
+                                                    p.SlotIndex = slotIndex;
+                                                    progress.Report(p);
+                                                }));
+
+                                                meta.Sha256Hash = hash;
+
+                                                progress.Report(new ProgressReport
+                                                {
+                                                    Type = ProgressReport.ReportType.SlotUpdate,
+                                                    UpdateType = ProgressReport.SlotUpdateType.InProgress,
+                                                    SlotIndex = slotIndex,
+                                                    ProgressPercentage = 100,
+                                                    StatusText = "Done"
+                                                });
+
+                                                await Task.Delay(250, gracefulToken);
+                                            }
+                                            catch (Exception fileEx) when (fileEx is not OperationCanceledException)
+                                            {
+                                                mismatchesSha.Add($"{meta.RelativePath} (Error: {fileEx.Message})");
+                                                progress.Report(new ProgressReport
+                                                {
+                                                    Type = ProgressReport.ReportType.SlotUpdate,
+                                                    UpdateType = ProgressReport.SlotUpdateType.InProgress,
+                                                    SlotIndex = slotIndex,
+                                                    ProgressPercentage = 100,
+                                                    StatusText = "Error"
+                                                });
+                                                await Task.Delay(500, gracefulToken);
+                                            }
+                                            finally
+                                            {
+                                                int currentProgress = Interlocked.Increment(ref processedCount);
+                                                progress.Report(new ProgressReport
+                                                {
+                                                    Type = ProgressReport.ReportType.OverallFileCompleted,
+                                                    OverallProgress = currentProgress
+                                                });
+                                            }
+                                        }
+
+                                        progress.Report(new ProgressReport
+                                        {
+                                            Type = ProgressReport.ReportType.SlotUpdate,
+                                            UpdateType = ProgressReport.SlotUpdateType.Finished,
+                                            SlotIndex = slotIndex
+                                        });
+                                    }, gracefulToken));
+                                }
+
+                                await Task.WhenAll(consumerTasks);
+                            }
+                            else
+                            {
+                                Application.Current.Dispatcher.Invoke(() =>
+                                {
+                                    OverallProgressBar.Maximum = 1;
+                                    OverallProgressBar.Value = 1;
+                                    OverallProgressText.Text = "1/1";
+                                });
+                            }
+
+                            if (action != Sha256Action.CompareOnly)
+                            {
+                                progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Saving/updating .sha256 files..." });
+                                bool makeHidden = action == Sha256Action.CreateHiddenAndCompare;
+                                SaveSha256Files(filesA, makeHidden);
+                                SaveSha256Files(filesB, makeHidden);
+                            }
+
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Comparing SHA256 hashes..." });
+
+                            // Phase 3: Compare results
+                            foreach (var kvp in filesA)
+                            {
+                                gracefulToken.ThrowIfCancellationRequested();
+                                string relativePath = kvp.Key;
+                                var metaA = kvp.Value;
+
+                                if (filesB.TryGetValue(relativePath, out var metaB))
+                                {
+                                    if (metaA.Size == metaB.Size)
+                                    {
+                                        if (string.Equals(metaA.Sha256Hash, metaB.Sha256Hash, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            matches++;
+                                        }
+                                        else
+                                        {
+                                            mismatchesSha.Add($"{relativePath} (SHA256 mismatch: {metaA.Sha256Hash} vs {metaB.Sha256Hash})");
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Logging results
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "SHA256 folder comparison complete." });
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Matches: {matches}" });
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Mismatches (Size/SHA256): {mismatchesSha.Count}" });
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder A: {onlyInA.Count}" });
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder B: {onlyInB.Count}" });
+
+                            if (mismatchesSha.IsEmpty && onlyInA.Count == 0 && onlyInB.Count == 0)
+                            {
+                                progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Successful comparison. No errors." });
+                            }
+
+                            // Report detailed errors (up to 5 samples each)
+                            Application.Current.Dispatcher.Invoke(() =>
+                            {
+                                ReportErrors("Mismatched (Size/SHA256)", mismatchesSha);
+                                ReportErrors("Only in Folder A", onlyInA);
+                                ReportErrors("Only in Folder B", onlyInB);
+                            });
+
+                            // Show MessageBox summary on UI thread
+                            string summaryMessage = $"SHA256 Comparison complete for folders:\n" +
+                                                   $"1: {firstFolder}\n" +
+                                                   $"2: {secondFolder}\n\n" +
+                                                   $"Matches: {matches}\n" +
+                                                   $"Mismatches (Size/SHA256): {mismatchesSha.Count}\n" +
+                                                   $"Only in Folder A: {onlyInA.Count}\n" +
+                                                   $"Only in Folder B: {onlyInB.Count}";
+                            Application.Current.Dispatcher.Invoke(() =>
+                            {
+                                MessageBox.Show(this, summaryMessage, "SHA256 Comparison Complete", MessageBoxButton.OK, MessageBoxImage.Information);
                             });
                         }
                     }, gracefulToken);
@@ -2138,12 +2363,52 @@ namespace ShaUtils
             }
         }
 
+        private void SaveSha256Files(Dictionary<string, FileComparisonMetadata> files, bool makeHidden)
+        {
+            var filesByDir = files.Values.GroupBy(f => Path.GetDirectoryName(f.FullPath) ?? string.Empty);
+            foreach (var group in filesByDir)
+            {
+                if (string.IsNullOrEmpty(group.Key)) continue;
+                string dirPath = group.Key;
+                string sha256FileName = Path.GetPathRoot(dirPath) == dirPath ? ".sha256" : Path.GetFileName(dirPath) + ".sha256";
+                string sha256FilePath = Path.Combine(dirPath, sha256FileName);
+
+                var shaEntries = ReadSha256File(sha256FilePath);
+                foreach (var file in group)
+                {
+                    if (!string.IsNullOrEmpty(file.Sha256Hash))
+                    {
+                        string fileName = Path.GetFileName(file.FullPath);
+                        shaEntries[fileName] = new Sha256Entry(file.Sha256Hash, fileName);
+                    }
+                }
+
+                try
+                {
+                    if (File.Exists(sha256FilePath))
+                    {
+                        File.SetAttributes(sha256FilePath, File.GetAttributes(sha256FilePath) & ~FileAttributes.ReadOnly & ~FileAttributes.Hidden);
+                    }
+                    WriteSha256File(sha256FilePath, [.. shaEntries.Values]);
+                    if (makeHidden)
+                    {
+                        File.SetAttributes(sha256FilePath, File.GetAttributes(sha256FilePath) | FileAttributes.Hidden);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Error writing SHA256 file '{sha256FilePath}': {ex.Message}");
+                }
+            }
+        }
+
         private class FileComparisonMetadata
         {
             public string RelativePath { get; set; } = string.Empty;
             public string FullPath { get; set; } = string.Empty;
             public long Size { get; set; }
             public DateTime LastWriteTimeUtc { get; set; }
+            public string? Sha256Hash { get; set; }
         }
 
         private async Task<Dictionary<string, FileComparisonMetadata>> ScanFolderAsync(string folderPath, bool skipLargeFiles, CancellationToken token)
