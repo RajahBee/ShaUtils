@@ -850,7 +850,16 @@ namespace ShaUtils
                 int totalMismatches = mismatchDetails.Count;
                 int totalMissingFromSha = missingFromShaDetails.Count;
                 int totalMissingOnDisk = missingOnDiskDetails.Count;
-                LogMessage($"Verify operation complete. Total files verified: {_totalFilesProcessed}, Matches: {totalMatches}, Mismatches: {totalMismatches}, Missing from .sha256: {totalMissingFromSha}, Missing on disk: {totalMissingOnDisk}.");
+                bool verifySuccess = totalMismatches == 0 && totalMissingFromSha == 0 && totalMissingOnDisk == 0;
+                string verifySummary = $"Verify operation complete. Total files verified: {_totalFilesProcessed}, Matches: {totalMatches}, Mismatches: {totalMismatches}, Missing from .sha256: {totalMissingFromSha}, Missing on disk: {totalMissingOnDisk}.";
+                if (verifySuccess)
+                {
+                    LogMessage(verifySummary, Brushes.DarkCyan, bold: true);
+                }
+                else
+                {
+                    LogMessage(verifySummary, Brushes.Red, bold: false);
+                }
                 ReportErrors("Mismatched Hashes", mismatchDetails);
                 ReportErrors("Missing from .sha256", missingFromShaDetails);
                 ReportErrors("Missing on Disk", missingOnDiskDetails);
@@ -1179,6 +1188,7 @@ namespace ShaUtils
             {
                 var type = reviewDialog.SelectedComparisonType;
                 var action = reviewDialog.SelectedSha256Action;
+                var fileOption = reviewDialog.SelectedSha256FileOption;
 
                 if (type != ComparisonType.NamesSizesAndDates && type != ComparisonType.Crc64 && type != ComparisonType.Sha256)
                 {
@@ -1565,6 +1575,24 @@ namespace ShaUtils
                             var mismatchesSha = new ConcurrentBag<string>();
                             var filesToHash = new List<FileComparisonMetadata>();
 
+                            // 1. Filter out .sha256 files if we are ignoring them
+                            if (action != Sha256Action.CompareIncludeSha)
+                            {
+                                var keysToRemoveA = filesA.Keys.Where(k => k.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase)).ToList();
+                                foreach (var key in keysToRemoveA) filesA.Remove(key);
+
+                                var keysToRemoveB = filesB.Keys.Where(k => k.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase)).ToList();
+                                foreach (var key in keysToRemoveB) filesB.Remove(key);
+                            }
+
+                            // 2. If we should use/include existing .sha256 files, load them first
+                            if (action == Sha256Action.CompareIncludeSha || action == Sha256Action.CompareExcludeSha || (action == Sha256Action.UseOrCreateSha && fileOption == Sha256FileOption.UseExisting))
+                            {
+                                progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Loading existing SHA256 hashes..." });
+                                LoadExistingSha256Hashes(filesA);
+                                LoadExistingSha256Hashes(filesB);
+                            }
+
                             progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Matching files and running size pre-checks..." });
 
                             // Phase 1: Match A to B and determine what needs hashing
@@ -1578,25 +1606,25 @@ namespace ShaUtils
                                 {
                                     if (metaA.Size == metaB.Size)
                                     {
-                                        filesToHash.Add(metaA);
-                                        filesToHash.Add(metaB);
+                                        if (string.IsNullOrEmpty(metaA.Sha256Hash)) filesToHash.Add(metaA);
+                                        if (string.IsNullOrEmpty(metaB.Sha256Hash)) filesToHash.Add(metaB);
                                     }
                                     else
                                     {
                                         mismatchesSha.Add($"{relativePath} (size differs: {FormatFileSize(metaA.Size)} vs {FormatFileSize(metaB.Size)})");
-                                        if (action != Sha256Action.CompareOnly)
+                                        if (action == Sha256Action.UseOrCreateSha)
                                         {
-                                            filesToHash.Add(metaA);
-                                            filesToHash.Add(metaB);
+                                            if (string.IsNullOrEmpty(metaA.Sha256Hash)) filesToHash.Add(metaA);
+                                            if (string.IsNullOrEmpty(metaB.Sha256Hash)) filesToHash.Add(metaB);
                                         }
                                     }
                                 }
                                 else
                                 {
                                     onlyInA.Add(relativePath);
-                                    if (action != Sha256Action.CompareOnly)
+                                    if (action == Sha256Action.UseOrCreateSha)
                                     {
-                                        filesToHash.Add(metaA);
+                                        if (string.IsNullOrEmpty(metaA.Sha256Hash)) filesToHash.Add(metaA);
                                     }
                                 }
                             }
@@ -1611,9 +1639,9 @@ namespace ShaUtils
                                 if (!filesA.ContainsKey(relativePath))
                                 {
                                     onlyInB.Add(relativePath);
-                                    if (action != Sha256Action.CompareOnly)
+                                    if (action == Sha256Action.UseOrCreateSha)
                                     {
-                                        filesToHash.Add(metaB);
+                                        if (string.IsNullOrEmpty(metaB.Sha256Hash)) filesToHash.Add(metaB);
                                     }
                                 }
                             }
@@ -1687,6 +1715,16 @@ namespace ShaUtils
                                                 });
                                                 await Task.Delay(500, gracefulToken);
                                             }
+                                            catch (OperationCanceledException)
+                                            {
+                                                progress.Report(new ProgressReport
+                                                {
+                                                    Type = ProgressReport.ReportType.SlotUpdate,
+                                                    UpdateType = ProgressReport.SlotUpdateType.Finished,
+                                                    SlotIndex = slotIndex
+                                                });
+                                                throw;
+                                            }
                                             finally
                                             {
                                                 int currentProgress = Interlocked.Increment(ref processedCount);
@@ -1719,12 +1757,13 @@ namespace ShaUtils
                                 });
                             }
 
-                            if (action != Sha256Action.CompareOnly)
+                            if (action == Sha256Action.UseOrCreateSha)
                             {
                                 progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Saving/updating .sha256 files..." });
-                                bool makeHidden = action == Sha256Action.CreateHiddenAndCompare;
-                                SaveSha256Files(filesA, makeHidden);
-                                SaveSha256Files(filesB, makeHidden);
+                                bool makeHidden = fileOption == Sha256FileOption.OverwriteHidden;
+                                bool overwrite = fileOption != Sha256FileOption.UseExisting;
+                                SaveSha256Files(filesA, makeHidden, overwrite);
+                                SaveSha256Files(filesB, makeHidden, overwrite);
                             }
 
                             progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Comparing SHA256 hashes..." });
@@ -1746,7 +1785,7 @@ namespace ShaUtils
                                         }
                                         else
                                         {
-                                            mismatchesSha.Add($"{relativePath} (SHA256 mismatch: {metaA.Sha256Hash} vs {metaB.Sha256Hash})");
+                                            mismatchesSha.Add($"{relativePath} (SHA256 mismatch: {metaA.Sha256Hash ?? "unknown"} vs {metaB.Sha256Hash ?? "unknown"})");
                                         }
                                     }
                                 }
@@ -2303,11 +2342,11 @@ namespace ShaUtils
             return item?.ToString() ?? string.Empty;
         }
 
-        private void LogMessage(string message, Brush? foreground = null)
+        private void LogMessage(string message, Brush? foreground = null, bool bold = false)
         {
             Dispatcher.Invoke(() =>
             {
-                bool isBold = false;
+                bool isBold = bold;
                 if (foreground == null)
                 {
                     if (message.Contains("Successful comparison. No errors."))
@@ -2390,7 +2429,7 @@ namespace ShaUtils
             }
         }
 
-        private void SaveSha256Files(Dictionary<string, FileComparisonMetadata> files, bool makeHidden)
+        private void SaveSha256Files(Dictionary<string, FileComparisonMetadata> files, bool makeHidden, bool overwrite)
         {
             var filesByDir = files.Values.GroupBy(f => Path.GetDirectoryName(f.FullPath) ?? string.Empty);
             foreach (var group in filesByDir)
@@ -2400,7 +2439,10 @@ namespace ShaUtils
                 string sha256FileName = Path.GetPathRoot(dirPath) == dirPath ? ".sha256" : Path.GetFileName(dirPath) + ".sha256";
                 string sha256FilePath = Path.Combine(dirPath, sha256FileName);
 
-                var shaEntries = ReadSha256File(sha256FilePath);
+                var shaEntries = overwrite
+                    ? new Dictionary<string, Sha256Entry>(StringComparer.OrdinalIgnoreCase)
+                    : ReadSha256File(sha256FilePath);
+
                 foreach (var file in group)
                 {
                     if (!string.IsNullOrEmpty(file.Sha256Hash))
@@ -2425,6 +2467,31 @@ namespace ShaUtils
                 catch (Exception ex)
                 {
                     LogMessage($"Error writing SHA256 file '{sha256FilePath}': {ex.Message}");
+                }
+            }
+        }
+
+        private void LoadExistingSha256Hashes(Dictionary<string, FileComparisonMetadata> files)
+        {
+            var filesByDir = files.Values.GroupBy(f => Path.GetDirectoryName(f.FullPath) ?? string.Empty);
+            foreach (var group in filesByDir)
+            {
+                if (string.IsNullOrEmpty(group.Key)) continue;
+                string dirPath = group.Key;
+                string sha256FileName = Path.GetPathRoot(dirPath) == dirPath ? ".sha256" : Path.GetFileName(dirPath) + ".sha256";
+                string sha256FilePath = Path.Combine(dirPath, sha256FileName);
+
+                if (File.Exists(sha256FilePath))
+                {
+                    var shaEntries = ReadSha256File(sha256FilePath);
+                    foreach (var file in group)
+                    {
+                        string fileName = Path.GetFileName(file.FullPath);
+                        if (shaEntries.TryGetValue(fileName, out var entry))
+                        {
+                            file.Sha256Hash = entry.Hash;
+                        }
+                    }
                 }
             }
         }

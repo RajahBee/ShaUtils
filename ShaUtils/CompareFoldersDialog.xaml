@@ -41,14 +41,20 @@
             </ComboBox>
         </StackPanel>
 
-        <!-- SHA256 Options Dropdown (Hidden by default, shown when SHA256 is selected) -->
-        <StackPanel x:Name="Sha256OptionsPanel" Grid.Row="4" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,5" Visibility="Collapsed">
-            <TextBlock Text="SHA256 action:" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,23,0"/>
-            <ComboBox x:Name="Sha256ActionComboBox" Width="300" VerticalAlignment="Center">
-                <ComboBoxItem IsSelected="True">Compare hashes only</ComboBoxItem>
-                <ComboBoxItem>Save visible .sha256 &amp; compare</ComboBoxItem>
-                <ComboBoxItem>Save hidden .sha256 &amp; compare</ComboBoxItem>
-            </ComboBox>
+        <!-- SHA256 Options Dropdown (Hidden by default, shown when SHA256 is selected) - Force rebuild -->
+        <StackPanel x:Name="Sha256OptionsPanel" Grid.Row="4" Orientation="Vertical" Visibility="Collapsed">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,5">
+                <TextBlock Text="SHA256 action:" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,23,0"/>
+                <ComboBox x:Name="Sha256ActionComboBox" Width="300" VerticalAlignment="Center" SelectionChanged="Sha256ActionComboBox_SelectionChanged">
+                    <ComboBoxItem IsSelected="True">compare hashes including existing .sha256 files</ComboBoxItem>
+                    <ComboBoxItem>compare hashes excluding existing .sha256 files</ComboBoxItem>
+                    <ComboBoxItem>use or create .sha256 files and compare</ComboBoxItem>
+                </ComboBox>
+            </StackPanel>
+            <StackPanel x:Name="Sha256FileOptionsRow" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,5" Visibility="Collapsed">
+                <TextBlock x:Name="Sha256FileOptionsLabel" Text=".sha256 file options:" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,10,0"/>
+                <ComboBox x:Name="Sha256FileOptionsComboBox" Width="300" VerticalAlignment="Center"/>
+            </StackPanel>
         </StackPanel>
 
         <!-- OK and Cancel Buttons -->
