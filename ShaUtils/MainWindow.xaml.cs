@@ -2289,7 +2289,8 @@ namespace ShaUtils
                         foreground = Brushes.DarkCyan;
                         isBold = true;
                     }
-                    else if (message.Contains("ERROR:") || message.Contains("Error:") || message.Contains("mismatch") || message.Contains("Mismatch"))
+                    else if (message.Contains("ERROR:") || message.Contains("Error:") ||
+                             ((message.Contains("mismatch") || message.Contains("Mismatch")) && !message.Trim().EndsWith(": 0")))
                     {
                         foreground = Brushes.Red;
                     }
