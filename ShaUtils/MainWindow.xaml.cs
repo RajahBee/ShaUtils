@@ -1149,7 +1149,7 @@ namespace ShaUtils
                 var type = reviewDialog.SelectedComparisonType;
                 var action = reviewDialog.SelectedSha256Action;
 
-                if (type != ComparisonType.NamesSizesAndDates)
+                if (type != ComparisonType.NamesSizesAndDates && type != ComparisonType.Crc64)
                 {
                     MessageBox.Show("This comparison type is not yet implemented.", "Compare Folders", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
@@ -1162,7 +1162,8 @@ namespace ShaUtils
                 var forceToken = _forceCancellationTokenSource.Token;
                 var stopwatch = new Stopwatch();
 
-                SetUiForOperationState(true, 0);
+                int workerThreads = type == ComparisonType.Crc64 ? GetSelectedThreadCountClamped() : 0;
+                SetUiForOperationState(true, workerThreads);
 
                 IProgress<ProgressReport> progress = new Progress<ProgressReport>(report =>
                 {
@@ -1184,7 +1185,7 @@ namespace ShaUtils
                     LogMessage("Starting folder comparison...");
                     LogMessage($"Folder 1: {firstFolder}");
                     LogMessage($"Folder 2: {secondFolder}");
-                    LogMessage($"Comparison Type: Names, Sizes & Dates");
+                    LogMessage($"Comparison Type: {type}");
 
                     bool skipLargeFiles = false;
                     Application.Current.Dispatcher.Invoke(() => skipLargeFiles = SkipLargeFilesCheckBox.IsChecked ?? false);
@@ -1201,96 +1202,300 @@ namespace ShaUtils
                         var filesB = await ScanFolderAsync(secondFolder, skipLargeFiles, gracefulToken);
                         progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Found {filesB.Count} files in '{secondFolder}'." });
 
-                        // 3. Setup progress bar maximum
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            OverallProgressBar.Maximum = filesA.Count + filesB.Count;
-                            OverallProgressText.Text = $"0/{OverallProgressBar.Maximum}";
-                        });
-
-                        int processedCount = 0;
                         int matches = 0;
-                        var mismatches = new List<string>();
                         var onlyInA = new List<string>();
                         var onlyInB = new List<string>();
 
-                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Comparing file names, sizes, and modification dates..." });
-
-                        // Phase 1: Compare A to B
-                        foreach (var kvp in filesA)
+                        if (type == ComparisonType.NamesSizesAndDates)
                         {
-                            gracefulToken.ThrowIfCancellationRequested();
-                            string relativePath = kvp.Key;
-                            var metaA = kvp.Value;
+                            var mismatches = new List<string>();
 
-                            if (filesB.TryGetValue(relativePath, out var metaB))
+                            // Setup progress bar maximum
+                            Application.Current.Dispatcher.Invoke(() =>
                             {
-                                bool sizeMatch = metaA.Size == metaB.Size;
-                                bool dateMatch = Math.Abs((metaA.LastWriteTimeUtc - metaB.LastWriteTimeUtc).TotalSeconds) <= 2;
+                                OverallProgressBar.Maximum = filesA.Count + filesB.Count;
+                                OverallProgressText.Text = $"0/{OverallProgressBar.Maximum}";
+                            });
 
-                                if (sizeMatch && dateMatch)
+                            int processedCount = 0;
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Comparing file names, sizes, and modification dates..." });
+
+                            // Phase 1: Compare A to B
+                            foreach (var kvp in filesA)
+                            {
+                                gracefulToken.ThrowIfCancellationRequested();
+                                string relativePath = kvp.Key;
+                                var metaA = kvp.Value;
+
+                                if (filesB.TryGetValue(relativePath, out var metaB))
                                 {
-                                    matches++;
+                                    bool sizeMatch = metaA.Size == metaB.Size;
+                                    bool dateMatch = Math.Abs((metaA.LastWriteTimeUtc - metaB.LastWriteTimeUtc).TotalSeconds) <= 2;
+
+                                    if (sizeMatch && dateMatch)
+                                    {
+                                        matches++;
+                                    }
+                                    else
+                                    {
+                                        var reasons = new List<string>();
+                                        if (!sizeMatch) reasons.Add($"size differs ({FormatFileSize(metaA.Size)} vs {FormatFileSize(metaB.Size)})");
+                                        if (!dateMatch) reasons.Add($"date differs ({metaA.LastWriteTimeUtc.ToLocalTime()} vs {metaB.LastWriteTimeUtc.ToLocalTime()})");
+                                        mismatches.Add($"{relativePath} ({string.Join(", ", reasons)})");
+                                    }
                                 }
                                 else
                                 {
-                                    var reasons = new List<string>();
-                                    if (!sizeMatch) reasons.Add($"size differs ({FormatFileSize(metaA.Size)} vs {FormatFileSize(metaB.Size)})");
-                                    if (!dateMatch) reasons.Add($"date differs ({metaA.LastWriteTimeUtc.ToLocalTime()} vs {metaB.LastWriteTimeUtc.ToLocalTime()})");
-                                    mismatches.Add($"{relativePath} ({string.Join(", ", reasons)})");
+                                    onlyInA.Add(relativePath);
                                 }
+
+                                processedCount++;
+                                progress.Report(new ProgressReport { Type = ProgressReport.ReportType.OverallFileCompleted, OverallProgress = processedCount });
+                            }
+
+                            // Phase 2: Check for files in B only
+                            foreach (var kvp in filesB)
+                            {
+                                gracefulToken.ThrowIfCancellationRequested();
+                                string relativePath = kvp.Key;
+
+                                if (!filesA.ContainsKey(relativePath))
+                                {
+                                    onlyInB.Add(relativePath);
+                                }
+
+                                processedCount++;
+                                progress.Report(new ProgressReport { Type = ProgressReport.ReportType.OverallFileCompleted, OverallProgress = processedCount });
+                            }
+
+                            // Logging results
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Folder comparison complete." });
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Matches: {matches}" });
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Mismatches (Size/Date): {mismatches.Count}" });
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder A: {onlyInA.Count}" });
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder B: {onlyInB.Count}" });
+
+                            // Report detailed errors (up to 5 samples each)
+                            Application.Current.Dispatcher.Invoke(() =>
+                            {
+                                ReportErrors("Mismatched (Size/Date)", mismatches);
+                                ReportErrors("Only in Folder A", onlyInA);
+                                ReportErrors("Only in Folder B", onlyInB);
+                            });
+
+                            // Show MessageBox summary on UI thread
+                            string summaryMessage = $"Comparison complete for folders:\n" +
+                                                   $"1: {firstFolder}\n" +
+                                                   $"2: {secondFolder}\n\n" +
+                                                   $"Matches: {matches}\n" +
+                                                   $"Mismatches (Size/Date): {mismatches.Count}\n" +
+                                                   $"Only in Folder A: {onlyInA.Count}\n" +
+                                                   $"Only in Folder B: {onlyInB.Count}";
+                            Application.Current.Dispatcher.Invoke(() =>
+                            {
+                                MessageBox.Show(this, summaryMessage, "Comparison Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                            });
+                        }
+                        else if (type == ComparisonType.Crc64)
+                        {
+                            var mismatchesCrc = new ConcurrentBag<string>();
+                            var equalSizePairs = new List<(FileComparisonMetadata A, FileComparisonMetadata B)>();
+
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Matching files and running size pre-checks..." });
+
+                            // Phase 1: Match A to B and do size pre-checks
+                            foreach (var kvp in filesA)
+                            {
+                                gracefulToken.ThrowIfCancellationRequested();
+                                string relativePath = kvp.Key;
+                                var metaA = kvp.Value;
+
+                                if (filesB.TryGetValue(relativePath, out var metaB))
+                                {
+                                    if (metaA.Size == metaB.Size)
+                                    {
+                                        equalSizePairs.Add((metaA, metaB));
+                                    }
+                                    else
+                                    {
+                                        mismatchesCrc.Add($"{relativePath} (size differs: {FormatFileSize(metaA.Size)} vs {FormatFileSize(metaB.Size)})");
+                                    }
+                                }
+                                else
+                                {
+                                    onlyInA.Add(relativePath);
+                                }
+                            }
+
+                            // Phase 2: Check for files in B only
+                            foreach (var kvp in filesB)
+                            {
+                                gracefulToken.ThrowIfCancellationRequested();
+                                string relativePath = kvp.Key;
+
+                                if (!filesA.ContainsKey(relativePath))
+                                {
+                                    onlyInB.Add(relativePath);
+                                }
+                            }
+
+                            if (equalSizePairs.Count > 0)
+                            {
+                                progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Calculating and comparing CRC64 checksums for {equalSizePairs.Count} files using {workerThreads} worker threads..." });
+
+                                Application.Current.Dispatcher.Invoke(() =>
+                                {
+                                    OverallProgressBar.Maximum = equalSizePairs.Count;
+                                    OverallProgressText.Text = $"0/{OverallProgressBar.Maximum}";
+                                });
+
+                                int processedCount = 0;
+                                var pairQueue = new ConcurrentQueue<(FileComparisonMetadata A, FileComparisonMetadata B)>(equalSizePairs);
+                                var consumerTasks = new List<Task>();
+
+                                for (int i = 0; i < workerThreads; i++)
+                                {
+                                    int slotIndex = i;
+                                    consumerTasks.Add(Task.Run(async () =>
+                                    {
+                                        while (pairQueue.TryDequeue(out var pair))
+                                        {
+                                            gracefulToken.ThrowIfCancellationRequested();
+                                            var metaA = pair.A;
+                                            var metaB = pair.B;
+
+                                            progress.Report(new ProgressReport
+                                            {
+                                                Type = ProgressReport.ReportType.SlotUpdate,
+                                                UpdateType = ProgressReport.SlotUpdateType.Started,
+                                                SlotIndex = slotIndex,
+                                                FileName = metaA.RelativePath,
+                                                FileSize = FormatFileSize(metaA.Size),
+                                                FullFileSize = metaA.Size
+                                            });
+
+                                            try
+                                            {
+                                                progress.Report(new ProgressReport
+                                                {
+                                                    Type = ProgressReport.ReportType.SlotUpdate,
+                                                    UpdateType = ProgressReport.SlotUpdateType.InProgress,
+                                                    SlotIndex = slotIndex,
+                                                    ProgressPercentage = 0,
+                                                    StatusText = "CRC64 A..."
+                                                });
+                                                ulong crcA = await Crc64.CalculateAsync(metaA.FullPath, forceToken, progress, slotIndex);
+
+                                                progress.Report(new ProgressReport
+                                                {
+                                                    Type = ProgressReport.ReportType.SlotUpdate,
+                                                    UpdateType = ProgressReport.SlotUpdateType.InProgress,
+                                                    SlotIndex = slotIndex,
+                                                    ProgressPercentage = 0,
+                                                    StatusText = "CRC64 B..."
+                                                });
+                                                ulong crcB = await Crc64.CalculateAsync(metaB.FullPath, forceToken, progress, slotIndex);
+
+                                                if (crcA == crcB)
+                                                {
+                                                    Interlocked.Increment(ref matches);
+                                                    progress.Report(new ProgressReport
+                                                    {
+                                                        Type = ProgressReport.ReportType.SlotUpdate,
+                                                        UpdateType = ProgressReport.SlotUpdateType.InProgress,
+                                                        SlotIndex = slotIndex,
+                                                        ProgressPercentage = 100,
+                                                        StatusText = "Match"
+                                                    });
+                                                }
+                                                else
+                                                {
+                                                    mismatchesCrc.Add($"{metaA.RelativePath} (CRC64 mismatch: {crcA:X16} vs {crcB:X16})");
+                                                    progress.Report(new ProgressReport
+                                                    {
+                                                        Type = ProgressReport.ReportType.SlotUpdate,
+                                                        UpdateType = ProgressReport.SlotUpdateType.InProgress,
+                                                        SlotIndex = slotIndex,
+                                                        ProgressPercentage = 100,
+                                                        StatusText = "Mismatch"
+                                                    });
+                                                }
+
+                                                await Task.Delay(250, gracefulToken);
+                                            }
+                                            catch (Exception fileEx) when (fileEx is not OperationCanceledException)
+                                            {
+                                                mismatchesCrc.Add($"{metaA.RelativePath} (Error: {fileEx.Message})");
+                                                progress.Report(new ProgressReport
+                                                {
+                                                    Type = ProgressReport.ReportType.SlotUpdate,
+                                                    UpdateType = ProgressReport.SlotUpdateType.InProgress,
+                                                    SlotIndex = slotIndex,
+                                                    ProgressPercentage = 100,
+                                                    StatusText = "Error"
+                                                });
+                                                await Task.Delay(500, gracefulToken);
+                                            }
+                                            finally
+                                            {
+                                                int currentProgress = Interlocked.Increment(ref processedCount);
+                                                progress.Report(new ProgressReport
+                                                {
+                                                    Type = ProgressReport.ReportType.OverallFileCompleted,
+                                                    OverallProgress = currentProgress
+                                                });
+                                            }
+                                        }
+
+                                        progress.Report(new ProgressReport
+                                        {
+                                            Type = ProgressReport.ReportType.SlotUpdate,
+                                            UpdateType = ProgressReport.SlotUpdateType.Finished,
+                                            SlotIndex = slotIndex
+                                        });
+                                    }, gracefulToken));
+                                }
+
+                                await Task.WhenAll(consumerTasks);
                             }
                             else
                             {
-                                onlyInA.Add(relativePath);
+                                Application.Current.Dispatcher.Invoke(() =>
+                                {
+                                    OverallProgressBar.Maximum = 1;
+                                    OverallProgressBar.Value = 1;
+                                    OverallProgressText.Text = "1/1";
+                                });
                             }
 
-                            processedCount++;
-                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.OverallFileCompleted, OverallProgress = processedCount });
-                        }
+                            // Logging results
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "CRC64 folder comparison complete." });
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Matches: {matches}" });
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Mismatches (Size/CRC64): {mismatchesCrc.Count}" });
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder A: {onlyInA.Count}" });
+                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder B: {onlyInB.Count}" });
 
-                        // Phase 2: Check for files in B only
-                        foreach (var kvp in filesB)
-                        {
-                            gracefulToken.ThrowIfCancellationRequested();
-                            string relativePath = kvp.Key;
-
-                            if (!filesA.ContainsKey(relativePath))
+                            // Report detailed errors (up to 5 samples each)
+                            Application.Current.Dispatcher.Invoke(() =>
                             {
-                                onlyInB.Add(relativePath);
-                            }
+                                ReportErrors("Mismatched (Size/CRC64)", mismatchesCrc);
+                                ReportErrors("Only in Folder A", onlyInA);
+                                ReportErrors("Only in Folder B", onlyInB);
+                            });
 
-                            processedCount++;
-                            progress.Report(new ProgressReport { Type = ProgressReport.ReportType.OverallFileCompleted, OverallProgress = processedCount });
+                            // Show MessageBox summary on UI thread
+                            string summaryMessage = $"CRC64 Comparison complete for folders:\n" +
+                                                   $"1: {firstFolder}\n" +
+                                                   $"2: {secondFolder}\n\n" +
+                                                   $"Matches: {matches}\n" +
+                                                   $"Mismatches (Size/CRC64): {mismatchesCrc.Count}\n" +
+                                                   $"Only in Folder A: {onlyInA.Count}\n" +
+                                                   $"Only in Folder B: {onlyInB.Count}";
+                            Application.Current.Dispatcher.Invoke(() =>
+                            {
+                                MessageBox.Show(this, summaryMessage, "CRC64 Comparison Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                            });
                         }
-
-                        // Logging results
-                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Folder comparison complete." });
-                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Matches: {matches}" });
-                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Mismatches (Size/Date): {mismatches.Count}" });
-                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder A: {onlyInA.Count}" });
-                        progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder B: {onlyInB.Count}" });
-
-                        // Report detailed errors (up to 5 samples each)
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            ReportErrors("Mismatched (Size/Date)", mismatches);
-                            ReportErrors("Only in Folder A", onlyInA);
-                            ReportErrors("Only in Folder B", onlyInB);
-                        });
-
-                        // Show MessageBox summary on UI thread
-                        string summaryMessage = $"Comparison complete for folders:\n" +
-                                               $"1: {firstFolder}\n" +
-                                               $"2: {secondFolder}\n\n" +
-                                               $"Matches: {matches}\n" +
-                                               $"Mismatches (Size/Date): {mismatches.Count}\n" +
-                                               $"Only in Folder A: {onlyInA.Count}\n" +
-                                               $"Only in Folder B: {onlyInB.Count}";
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            MessageBox.Show(this, summaryMessage, "Comparison Complete", MessageBoxButton.OK, MessageBoxImage.Information);
-                        });
                     }, gracefulToken);
                 }
                 catch (OperationCanceledException)

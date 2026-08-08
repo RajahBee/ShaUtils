@@ -30,6 +30,7 @@ namespace ShaUtils
 
         private void ComparisonTypeComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
+            // Ensure the panel is initialized before accessing it to prevent NullReferenceException
             if (Sha256OptionsPanel == null) return;
 
             // Index 2 is SHA256 in the ComboBox items
