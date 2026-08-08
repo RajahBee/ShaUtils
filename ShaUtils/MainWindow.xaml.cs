@@ -234,6 +234,8 @@ namespace ShaUtils
         private CancellationState _cancellationState = CancellationState.NotCancelled;
         private readonly ObservableCollection<WorkerSlot> _workerSlots = [];
         private int _totalFilesProcessed = 0;
+        private string? _lastCompareFolder1;
+        private string? _lastCompareFolder2;
         private static readonly long LargeFileThreshold = 20 * 1024 * 1024; // 20 MB
 
         private static readonly HashSet<string> ExcludedFolderNames = new(StringComparer.OrdinalIgnoreCase)
@@ -1117,6 +1119,11 @@ namespace ShaUtils
                 Title = "Choose the first directory that you wish to compare against or click cancel to cancel the entire compare operation"
             };
 
+            if (!string.IsNullOrEmpty(_lastCompareFolder1))
+            {
+                dialog1.InitialDirectory = _lastCompareFolder1;
+            }
+
             if (dialog1.ShowDialog() != true)
             {
                 LogMessage("Folder comparison cancelled. First directory selection was cancelled.");
@@ -1124,11 +1131,29 @@ namespace ShaUtils
             }
 
             string firstFolder = dialog1.FolderName;
+            _lastCompareFolder1 = firstFolder;
 
             var dialog2 = new Microsoft.Win32.OpenFolderDialog
             {
                 Title = "Choose the directory to compare to the previously chosen directory or click cancel to cancel the entire compare operation"
             };
+
+            if (!string.IsNullOrEmpty(_lastCompareFolder2))
+            {
+                dialog2.InitialDirectory = _lastCompareFolder2;
+            }
+            else if (!string.IsNullOrEmpty(firstFolder))
+            {
+                try
+                {
+                    string? parent = Path.GetDirectoryName(firstFolder);
+                    if (!string.IsNullOrEmpty(parent))
+                    {
+                        dialog2.InitialDirectory = parent;
+                    }
+                }
+                catch { }
+            }
 
             if (dialog2.ShowDialog() != true)
             {
@@ -1137,6 +1162,7 @@ namespace ShaUtils
             }
 
             string secondFolder = dialog2.FolderName;
+            _lastCompareFolder2 = secondFolder;
 
             if (string.Equals(firstFolder, secondFolder, StringComparison.OrdinalIgnoreCase))
             {
