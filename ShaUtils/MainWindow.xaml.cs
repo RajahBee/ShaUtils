@@ -853,6 +853,11 @@ namespace ShaUtils
                 ReportErrors("Missing from .sha256", missingFromShaDetails);
                 ReportErrors("Missing on Disk", missingOnDiskDetails);
 
+                if (totalMismatches == 0 && totalMissingFromSha == 0 && totalMissingOnDisk == 0)
+                {
+                    LogMessage("Successful comparison. No errors.");
+                }
+
                 if (isFullDriveVerification)
                 {
                     try
@@ -1275,6 +1280,11 @@ namespace ShaUtils
                             progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder A: {onlyInA.Count}" });
                             progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder B: {onlyInB.Count}" });
 
+                            if (mismatches.Count == 0 && onlyInA.Count == 0 && onlyInB.Count == 0)
+                            {
+                                progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Successful comparison. No errors." });
+                            }
+
                             // Report detailed errors (up to 5 samples each)
                             Application.Current.Dispatcher.Invoke(() =>
                             {
@@ -1474,6 +1484,11 @@ namespace ShaUtils
                             progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Mismatches (Size/CRC64): {mismatchesCrc.Count}" });
                             progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder A: {onlyInA.Count}" });
                             progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = $"Only in Folder B: {onlyInB.Count}" });
+
+                            if (mismatchesCrc.IsEmpty && onlyInA.Count == 0 && onlyInB.Count == 0)
+                            {
+                                progress.Report(new ProgressReport { Type = ProgressReport.ReportType.StatusMessage, Message = "Successful comparison. No errors." });
+                            }
 
                             // Report detailed errors (up to 5 samples each)
                             Application.Current.Dispatcher.Invoke(() =>
@@ -2014,13 +2029,38 @@ namespace ShaUtils
             return item?.ToString() ?? string.Empty;
         }
 
-        private void LogMessage(string message)
+        private void LogMessage(string message, Brush? foreground = null)
         {
             Dispatcher.Invoke(() =>
             {
-                string text = $"{DateTime.Now:HH:mm:ss}: {message}";
-                StatusLogListBox.Items.Add(text);
-                StatusLogListBox.ScrollIntoView(StatusLogListBox.Items[^1]);
+                bool isBold = false;
+                if (foreground == null)
+                {
+                    if (message.Contains("Successful comparison. No errors."))
+                    {
+                        foreground = Brushes.DarkCyan;
+                        isBold = true;
+                    }
+                    else if (message.Contains("ERROR:") || message.Contains("Error:") || message.Contains("mismatch") || message.Contains("Mismatch"))
+                    {
+                        foreground = Brushes.Red;
+                    }
+                }
+
+                var item = new ListBoxItem
+                {
+                    Content = $"{DateTime.Now:HH:mm:ss}: {message}"
+                };
+                if (foreground != null)
+                {
+                    item.Foreground = foreground;
+                }
+                if (isBold)
+                {
+                    item.FontWeight = FontWeights.Bold;
+                }
+                StatusLogListBox.Items.Add(item);
+                StatusLogListBox.ScrollIntoView(item);
             });
         }
 
