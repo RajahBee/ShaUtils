@@ -1178,6 +1178,29 @@ namespace ShaUtils
                             OverallProgressBar.Value = report.OverallProgress;
                             OverallProgressText.Text = $"{report.OverallProgress}/{OverallProgressBar.Maximum}";
                             break;
+                        case ProgressReport.ReportType.SlotUpdate:
+                            if (report.SlotIndex < _workerSlots.Count)
+                            {
+                                var slot = _workerSlots[report.SlotIndex];
+                                switch (report.UpdateType)
+                                {
+                                    case ProgressReport.SlotUpdateType.Started:
+                                        slot.FileName = report.FileName;
+                                        slot.FileSize = report.FileSize;
+                                        slot.ShowProgressBar = report.FullFileSize > LargeFileThreshold;
+                                        slot.ProgressPercentage = 0;
+                                        slot.StatusText = "Starting...";
+                                        break;
+                                    case ProgressReport.SlotUpdateType.InProgress:
+                                        slot.ProgressPercentage = report.ProgressPercentage;
+                                        slot.StatusText = report.StatusText;
+                                        break;
+                                    case ProgressReport.SlotUpdateType.Finished:
+                                        slot.Clear();
+                                        break;
+                                }
+                            }
+                            break;
                         case ProgressReport.ReportType.StatusMessage:
                             LogMessage(report.Message);
                             break;
@@ -1615,7 +1638,7 @@ namespace ShaUtils
             }
         }
 
-        private static string FormatTimeSpan(TimeSpan t)
+        internal static string FormatTimeSpan(TimeSpan t)
         {
             string formattedTime;
             if (t.TotalDays >= 1)
@@ -1629,7 +1652,7 @@ namespace ShaUtils
             return $"(est. {formattedTime})";
         }
 
-        private static string FormatFileSize(long bytes)
+        internal static string FormatFileSize(long bytes)
         {
             var suf = new[] { "B", "KB", "MB", "GB", "TB", "PB", "EB" };
             if (bytes == 0) return "0" + suf[0];

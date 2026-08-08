@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -47,27 +48,45 @@ namespace ShaUtils
             var buffer = new byte[bufferSize];
             ulong crc = 0;
             long totalBytesRead = 0;
+            var stopwatch = new Stopwatch();
+            var lastReportTime = DateTime.MinValue;
 
             using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, useAsync: true);
             long fileLength = stream.Length;
 
             int bytesRead;
+            stopwatch.Start();
             while ((bytesRead = await stream.ReadAsync(buffer, token)) > 0)
             {
                 crc = Calculate(buffer, 0, bytesRead, crc);
                 totalBytesRead += bytesRead;
 
-                if (progress != null && slotIndex >= 0)
+                if (progress != null && slotIndex >= 0 && (DateTime.UtcNow - lastReportTime > TimeSpan.FromMilliseconds(250)))
                 {
-                    int percentage = fileLength > 0 ? (int)((double)totalBytesRead / fileLength * 100) : 100;
-                    progress.Report(new ProgressReport
+                    var elapsedSeconds = stopwatch.Elapsed.TotalSeconds;
+                    if (elapsedSeconds > 0)
                     {
-                        Type = ProgressReport.ReportType.SlotUpdate,
-                        UpdateType = ProgressReport.SlotUpdateType.InProgress,
-                        SlotIndex = slotIndex,
-                        ProgressPercentage = percentage,
-                        StatusText = $"{percentage}%"
-                    });
+                        var speed = (long)(totalBytesRead / elapsedSeconds);
+                        var remainingBytes = fileLength - totalBytesRead;
+                        var estimatedSecondsRemaining = speed > 0 ? (double)remainingBytes / speed : 0;
+                        var percentage = (int)((double)totalBytesRead / fileLength * 100);
+
+                        string statusText = $"{MainWindow.FormatFileSize(speed)}/s";
+                        if (estimatedSecondsRemaining > 3)
+                        {
+                            statusText += $" {MainWindow.FormatTimeSpan(TimeSpan.FromSeconds(estimatedSecondsRemaining))}";
+                        }
+
+                        progress.Report(new ProgressReport
+                        {
+                            Type = ProgressReport.ReportType.SlotUpdate,
+                            UpdateType = ProgressReport.SlotUpdateType.InProgress,
+                            SlotIndex = slotIndex,
+                            ProgressPercentage = percentage,
+                            StatusText = statusText
+                        });
+                        lastReportTime = DateTime.UtcNow;
+                    }
                 }
             }
 
